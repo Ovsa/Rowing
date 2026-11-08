@@ -31,4 +31,11 @@ jobs:
       - name: Publish verified release assets
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 tools/publish_release.py --publish
+        run: |
+          for attempt in 1 2 3; do
+            if python3 tools/publish_release.py --publish; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep 15; fi
+          done
+          exit 1
