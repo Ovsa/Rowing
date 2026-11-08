@@ -17,6 +17,24 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def held_releases(current, version_code=None):
+    path = ROOT / "release-policy.json"
+    if not path.exists():
+        return []
+    policy = json.loads(path.read_text(encoding="utf-8"))
+    tags = policy.get("holdAsPrerelease")
+    if policy.get("schemaVersion") != 1 or not isinstance(tags, list) or len(tags) > 20:
+        raise ValueError("Invalid release policy")
+    ceiling = policy.get("stableVersionCodeMax")
+    if ceiling is not None and (type(ceiling) is not int or ceiling < 1):
+        raise ValueError("Invalid stable versionCode ceiling")
+    if ceiling is not None and version_code is not None and version_code > ceiling:
+        raise ValueError("Stable release is on hold until bootstrap update is confirmed on both phones")
+    if any(not isinstance(tag, str) or not re.fullmatch(r"v[A-Za-z0-9][A-Za-z0-9._-]{0,39}", tag) or tag == current for tag in tags):
+        raise ValueError("Invalid held release tag")
+    return tags
+
+
 def verify():
     folder = ROOT / "release"
     value = json.loads((folder / "update.json").read_text(encoding="utf-8"))
@@ -32,6 +50,7 @@ def verify():
         if type(value.get(key)) is not int or not 1 <= value[key] <= maximum:
             raise ValueError("Invalid " + key)
     tag = "v" + version
+    held_releases(tag, value["versionCode"])
     apk = folder / ("Row360-" + version + ".apk")
     expected_url = f"https://github.com/{repository}/releases/download/{tag}/{apk.name}"
     if value.get("apkUrl") != expected_url:
@@ -113,6 +132,12 @@ def publish(repository, tag, notes, assets):
     if release["draft"]:
         release = api.request("PATCH", base + "/" + str(release["id"]),
                               {"draft": False, "prerelease": False, "make_latest": "true"})
+    for held_tag in held_releases(tag):
+        held = api.request("GET", base + "/tags/" + quote(held_tag, safe=""))
+        if held is not None and not held["prerelease"]:
+            api.request("PATCH", base + "/" + str(held["id"]),
+                        {"prerelease": True, "make_latest": "false"})
+            print("Held as prerelease: " + held_tag)
     print("Published and verified: " + release["html_url"])
 
 

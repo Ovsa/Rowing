@@ -6,6 +6,7 @@ on:
     paths:
       - 'release/**'
       - 'tools/publish_release.py'
+      - 'release-policy.json'
       - '.github/workflows/publish.yml'
   workflow_dispatch:
 

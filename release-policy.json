@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "stableVersionCodeMax": 30,
+  "holdAsPrerelease": ["v1.27.0"]
+}
