@@ -4,6 +4,7 @@ Default/--verify is offline. --publish uses only the job-scoped GITHUB_TOKEN.
 Existing published assets are checked, never deleted or overwritten.
 """
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -49,8 +50,11 @@ def verify():
     for key, maximum in (("versionCode", 2147483647), ("minSdk", 1000), ("sizeBytes", 1073741824)):
         if type(value.get(key)) is not int or not 1 <= value[key] <= maximum:
             raise ValueError("Invalid " + key)
-    tag = "v" + version
-    held_releases(tag, value["versionCode"])
+    channel=value.get("channel","main")
+    if channel not in ("main","lite") or os.environ.get("GITHUB_REF_NAME",channel)!=channel:
+        raise ValueError("Release channel must match the main or lite branch")
+    tag = ("lite-v" if channel=="lite" else "v") + version
+    if channel=="main":held_releases(tag, value["versionCode"])
     apk = folder / ("Row360-" + version + ".apk")
     expected_url = f"https://github.com/{repository}/releases/download/{tag}/{apk.name}"
     if value.get("apkUrl") != expected_url:
@@ -110,11 +114,21 @@ def publish(repository, tag, notes, assets):
     if not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Publication requires the workflow's exact GITHUB_SHA")
     api = GitHub(os.environ.get("GITHUB_TOKEN", ""))
+    lite=tag.startswith("lite-v")
+    manifest=json.loads(assets[1].read_text(encoding="utf-8"))
+    other="main" if lite else "lite"
+    previous=api.request("GET",f"https://api.github.com/repos/{repository}/contents/release/update.json?ref={other}")
+    if previous is not None:
+        if previous.get("encoding")!="base64" or previous.get("size",100000)>65536:
+            raise ValueError("Unexpected other-channel manifest")
+        previous=json.loads(base64.b64decode(previous["content"]))
+        if manifest["versionCode"]<previous["versionCode"] or (manifest["versionCode"]==previous["versionCode"] and manifest["sha256"]!=previous["sha256"]):
+            raise ValueError("Use a versionCode above both channels, or the identical APK for both")
     base = f"https://api.github.com/repos/{repository}/releases"
     release = api.request("GET", base + "/tags/" + quote(tag, safe=""))
     if release is None:
         release = api.request("POST", base, {"tag_name": tag, "target_commitish": commit,
-            "name": "Гребля 360 · " + tag[1:], "body": notes, "draft": True, "prerelease": False})
+            "name": "Гребля 360 · " + ("Lite · "+manifest["versionName"] if lite else tag[1:]), "body": notes, "draft": True, "prerelease": lite})
     uploaded = {asset["name"]: asset for asset in release.get("assets", [])}
     for path in assets:
         existing = uploaded.get(path.name)
@@ -131,8 +145,8 @@ def publish(repository, tag, notes, assets):
             raise ValueError("Uploaded asset checksum mismatch: " + path.name)
     if release["draft"]:
         release = api.request("PATCH", base + "/" + str(release["id"]),
-                              {"draft": False, "prerelease": False, "make_latest": "true"})
-    for held_tag in held_releases(tag):
+                              {"draft": False, "prerelease": lite, "make_latest": "false" if lite else "true"})
+    for held_tag in ([] if lite else held_releases(tag)):
         held = api.request("GET", base + "/tags/" + quote(held_tag, safe=""))
         if held is not None and not held["prerelease"]:
             api.request("PATCH", base + "/" + str(held["id"]),

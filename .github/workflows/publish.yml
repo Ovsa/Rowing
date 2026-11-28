@@ -2,7 +2,7 @@ name: Publish Row360 APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, lite]
     paths:
       - 'release/**'
       - 'tools/publish_release.py'
@@ -14,7 +14,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: row360-release
+  group: row360-release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
